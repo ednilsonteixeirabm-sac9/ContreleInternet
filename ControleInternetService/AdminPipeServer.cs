@@ -164,13 +164,14 @@ namespace ControleInternet.Service
                 null);
             SecurityIdentifier network = new SecurityIdentifier(WellKnownSidType.NetworkSid, null);
 
+            security.SetOwner(system);
             security.AddAccessRule(new PipeAccessRule(
                 network,
                 PipeAccessRights.FullControl,
                 AccessControlType.Deny));
             security.AddAccessRule(new PipeAccessRule(
                 authenticatedUsers,
-                PipeAccessRights.ReadWrite,
+                PipeAccessRights.ReadWrite | PipeAccessRights.ReadPermissions,
                 AccessControlType.Allow));
             security.AddAccessRule(new PipeAccessRule(
                 system,
