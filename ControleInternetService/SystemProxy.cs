@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
@@ -19,12 +18,6 @@ namespace ControleInternet.Service
             @"SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections";
         private const int InternetOptionRefresh = 37;
         private const int InternetOptionSettingsChanged = 39;
-        private const int InternetOptionPerConnectionOption = 75;
-        private const int InternetPerConnFlags = 1;
-        private const int InternetPerConnProxyServer = 2;
-        private const int InternetPerConnProxyBypass = 3;
-        private const int InternetPerConnAutoConfigUrl = 4;
-        private const int ProxyTypeProxy = 0x00000002;
         private static readonly object Sync = new object();
 
         [DllImport("wininet.dll", SetLastError = true, CharSet = CharSet.Auto)]
@@ -62,7 +55,6 @@ namespace ControleInternet.Service
                     settings.SetValue("AutoDetect", 0, RegistryValueKind.DWord);
                 }
 
-                ApplyPerConnectionSettings();
                 NotifyChange();
                 Logger.Info("Proxy WinINet por máquina ativado.");
             }
@@ -244,93 +236,6 @@ namespace ControleInternet.Service
             InternetSetOption(IntPtr.Zero, InternetOptionRefresh, IntPtr.Zero, 0);
         }
 
-        private static void ApplyPerConnectionSettings()
-        {
-            string proxy = "http=127.0.0.1:" + Paths.ProxyPort
-                + ";https=127.0.0.1:" + Paths.ProxyPort;
-            string bypass = "localhost;127.*;[::1]";
-            IntPtr proxyPointer = Marshal.StringToHGlobalAuto(proxy);
-            IntPtr bypassPointer = Marshal.StringToHGlobalAuto(bypass);
-            IntPtr optionsPointer = IntPtr.Zero;
-            try
-            {
-                InternetPerConnectionOption[] options =
-                {
-                    CreateDwordOption(InternetPerConnFlags, ProxyTypeProxy),
-                    CreatePointerOption(InternetPerConnProxyServer, proxyPointer),
-                    CreatePointerOption(InternetPerConnProxyBypass, bypassPointer),
-                    CreatePointerOption(InternetPerConnAutoConfigUrl, IntPtr.Zero)
-                };
-
-                int optionSize = Marshal.SizeOf(typeof(InternetPerConnectionOption));
-                optionsPointer = Marshal.AllocCoTaskMem(optionSize * options.Length);
-                for (int index = 0; index < options.Length; index++)
-                {
-                    Marshal.StructureToPtr(
-                        options[index],
-                        new IntPtr(optionsPointer.ToInt64() + (long)index * optionSize),
-                        false);
-                }
-
-                InternetPerConnectionOptionList list = new InternetPerConnectionOptionList
-                {
-                    Size = Marshal.SizeOf(typeof(InternetPerConnectionOptionList)),
-                    Connection = IntPtr.Zero,
-                    OptionCount = options.Length,
-                    OptionError = 0,
-                    Options = optionsPointer
-                };
-
-                IntPtr listPointer = Marshal.AllocCoTaskMem(list.Size);
-                try
-                {
-                    Marshal.StructureToPtr(list, listPointer, false);
-                    if (!InternetSetOption(
-                            IntPtr.Zero,
-                            InternetOptionPerConnectionOption,
-                            listPointer,
-                            list.Size))
-                    {
-                        throw new Win32Exception(
-                            Marshal.GetLastWin32Error(),
-                            "Não foi possível desativar PAC/WPAD e aplicar o proxy manual.");
-                    }
-                }
-                finally
-                {
-                    Marshal.FreeCoTaskMem(listPointer);
-                }
-            }
-            finally
-            {
-                if (optionsPointer != IntPtr.Zero)
-                {
-                    Marshal.FreeCoTaskMem(optionsPointer);
-                }
-
-                Marshal.FreeHGlobal(proxyPointer);
-                Marshal.FreeHGlobal(bypassPointer);
-            }
-        }
-
-        private static InternetPerConnectionOption CreateDwordOption(int option, int value)
-        {
-            return new InternetPerConnectionOption
-            {
-                Option = option,
-                Value = new InternetPerConnectionOptionValue { Dword = value }
-            };
-        }
-
-        private static InternetPerConnectionOption CreatePointerOption(int option, IntPtr value)
-        {
-            return new InternetPerConnectionOption
-            {
-                Option = option,
-                Value = new InternetPerConnectionOptionValue { Pointer = value }
-            };
-        }
-
         [DataContract]
         private sealed class ProxyBackup
         {
@@ -392,31 +297,5 @@ namespace ControleInternet.Service
             public byte[] Value { get; set; }
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct InternetPerConnectionOptionList
-        {
-            public int Size;
-            public IntPtr Connection;
-            public int OptionCount;
-            public int OptionError;
-            public IntPtr Options;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct InternetPerConnectionOption
-        {
-            public int Option;
-            public InternetPerConnectionOptionValue Value;
-        }
-
-        [StructLayout(LayoutKind.Explicit)]
-        private struct InternetPerConnectionOptionValue
-        {
-            [FieldOffset(0)]
-            public int Dword;
-
-            [FieldOffset(0)]
-            public IntPtr Pointer;
-        }
     }
 }
