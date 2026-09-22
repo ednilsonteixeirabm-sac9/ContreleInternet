@@ -12,7 +12,6 @@ namespace ControleInternet.Service
         private readonly Func<AdminRequest, AdminResponse> _handler;
         private readonly object _sync = new object();
         private volatile bool _running;
-        private bool _firstInstance = true;
         private NamedPipeServerStream _waitingPipe;
         private Thread _acceptThread;
 
@@ -67,8 +66,7 @@ namespace ControleInternet.Service
                 NamedPipeServerStream pipe = null;
                 try
                 {
-                    pipe = CreatePipe(_firstInstance);
-                    _firstInstance = false;
+                    pipe = CreatePipe();
                     lock (_sync)
                     {
                         if (!_running)
@@ -154,7 +152,7 @@ namespace ControleInternet.Service
             }
         }
 
-        private static NamedPipeServerStream CreatePipe(bool firstInstance)
+        private static NamedPipeServerStream CreatePipe()
         {
             PipeSecurity security = new PipeSecurity();
             SecurityIdentifier authenticatedUsers = new SecurityIdentifier(
@@ -188,7 +186,7 @@ namespace ControleInternet.Service
                 PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | (firstInstance ? (PipeOptions)0x00080000 : PipeOptions.None),
+                PipeOptions.Asynchronous,
                 4096,
                 4096,
                 security);
