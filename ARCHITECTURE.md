@@ -83,9 +83,9 @@ ControleInternet.sln
 ├── ControleInternetService\          (WinExe, Windows Service, .NET Framework 4.6.2)
 │   ├── Program.cs
 │   ├── ControleInternetService.cs
-│   ├── ConfigWatcher.cs
+│   ├── AdminPipeServer.cs
 │   ├── SystemProxy.cs                (backup / aplicar / restaurar proxy)
-│   └── LocalHttpProxy.cs             (mecanismo de bloqueio — não implementar agora)
+│   └── LocalHttpProxy.cs
 │
 ├── setup\
 │   ├── install.bat
@@ -187,7 +187,7 @@ SHA-1 dentro de PBKDF2 com salt e muitas iterações é o mecanismo seguro dispo
 - se colar `https://gov.br/caminho`, a UI rejeita ou extrai o host — a regra de cadastro continua sendo domínio puro;
 - normalização: minúsculas, remoção de ponto final, rejeição de espaços e de caracteres inválidos.
 
-Regra de pertencimento (allowlist), a ser usada depois da aprovação:
+Regra de pertencimento (allowlist):
 
 ```text
 permitido(host, dominio) =
@@ -217,9 +217,9 @@ Checkbox 2 (`Liberar os sites listados a seguir`) só tem efeito quando o checkb
 ### Serviço
 
 - `ControleInternetService` — `OnStart` / `OnStop` / `OnShutdown`.
-- `ConfigWatcher` — `FileSystemWatcher` no `config.json` + releitura defensiva.
+- `AdminPipeServer` — recebe pedidos da interface e só os aceita após validação da senha.
 - `SystemProxy` — backup, aplicação e restauração do proxy por máquina.
-- `LocalHttpProxy` — **não implementar nesta etapa.**
+- `LocalHttpProxy` — identifica `Host`/`CONNECT`, bloqueia ou encaminha o tráfego.
 
 ---
 
@@ -357,7 +357,7 @@ Se as tentativas de recuperação falharem, a desinstalação administrativa res
 - O Windows está configurado para **reiniciar o serviço automaticamente**.
 - Enquanto o processo não volta: o proxy do sistema continua apontando para `127.0.0.1:18754` e **não há processo escutando**. Navegadores que usam o proxy **não acessam sites**. É falha **fechada** (fail-closed), não “liberou a Internet”.
 - Isso atende “o bloqueio não depende da interface” e evita uma janela em que o crash do serviço libere tudo.
-- Não deixa o PC **permanentemente** sem Internet: o serviço sobe de novo sozinho; o administrador pode abrir a UI, desmarcar o bloqueio e salvar; a desinstalação restaura o proxy.
+- Não deixa o PC **permanentemente** sem Internet: o serviço sobe de novo sozinho; se a recuperação automática falhar, a desinstalação administrativa restaura o proxy diretamente do backup.
 
 ### Erro no meio da instalação ou da configuração
 
@@ -385,12 +385,12 @@ Se o backup não existir (nunca chegou a alterar o Windows), não mexe no proxy.
 
 ## 8. Instalação
 
-Sem instalador gráfico complexo na primeira versão de código (depois da aprovação):
+Sem instalador gráfico complexo:
 
 - `setup\install.bat` — copia arquivos, `sc create` / `InstallUtil`, `sc config start= auto`, `sc failure` para restart, `net start`.
 - `setup\uninstall.bat` — procedimento da seção 7.
 
-Requer **administrador** uma vez, para registrar o serviço e poder gravar HKLM. O uso diário da UI também precisará de direitos suficientes para gravar em ProgramData e sinalizar o serviço — na prática, o administrador da máquina.
+Requer **administrador** somente para instalar e desinstalar, registrar o serviço, proteger ProgramData e gravar HKLM. O uso diário da UI é feito por usuário normal, sem UAC; o serviço `LocalSystem` valida os pedidos e realiza toda alteração protegida.
 
 ---
 
@@ -403,7 +403,7 @@ O PRD não exige resistência a quem tem direitos de administrador e quer furar 
 3. **VPN / proxy manual** definido depois pelo usuário pode desviar o tráfego.
 4. **Políticas ou linha de comando do navegador:** uma política empresarial, extensão autorizada ou parâmetro de inicialização que defina outro proxy pode ter precedência sobre o proxy do sistema.
 5. **Edge no Windows 7:** não há Edge Chromium suportado; no 7 o alvo é o Chrome (e o Internet Explorer, que também usa WinINet, embora o PRD não o cite).
-6. **Domínios internacionalizados (IDN):** o navegador envia forma punycode (`xn--...`) no `CONNECT`. O cadastro deve usar o mesmo texto que o navegador envia, ou a implementação (após aprovação) normaliza com `System.Globalization.IdnMapping`, API já existente no 4.6.2.
+6. **Domínios internacionalizados (IDN):** o navegador envia forma punycode (`xn--...`) no `CONNECT`; a implementação normaliza o cadastro com `System.Globalization.IdnMapping`, API existente no 4.6.2.
 7. **Não bloqueia qualquer protocolo**, só o que o sistema manda ao proxy HTTP. O alvo do PRD é site HTTP/HTTPS no Chrome/Edge.
 8. **Reinício do navegador:** depois de Salvar, a UI avisa o WinINet da sessão atual; mesmo assim, abas já abertas podem precisar ser recarregadas.
 
@@ -417,10 +417,10 @@ Conforme o PRD, não haverá horários, perfis, usuários, histórico, relatóri
 
 ---
 
-## 11. Pedido de aprovação
+## 11. Aprovação registrada
 
-Para seguir à implementação, é necessário aprovar explicitamente:
+Arquitetura aprovada em 22/09/2026:
 
-**Mecanismo: proxy HTTP local no Windows Service + proxy WinINet/Internet Options por máquina, sem WinHTTP e sem regra de firewall.**
+**Proxy HTTP local no Windows Service + proxy WinINet/Internet Options por máquina, sem WinHTTP, sem alteração de DNS e sem regra de firewall.**
 
-Enquanto essa aprovação não existir, não será escrito o código de `LocalHttpProxy` nem `SystemProxy`.
+A alteração obrigatória aprovada na mesma data determina que `ControleInternet.exe` execute como usuário normal, sem UAC, e solicite ao serviço `LocalSystem`, por IPC autenticado, todas as operações protegidas.
