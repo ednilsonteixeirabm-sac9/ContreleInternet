@@ -241,6 +241,7 @@ Antes da primeira alteração, o serviço salva os valores originais. Enquanto `
 | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyServer` | `http=127.0.0.1:18754;https=127.0.0.1:18754` | Direciona tanto HTTP quanto HTTPS ao proxy local. O prefixo `https=` identifica URLs HTTPS; o proxy usado continua sendo um proxy HTTP comum. |
 | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyOverride` | somente loopback local | Impede que endereços locais sejam encaminhados ao proxy. Não haverá `<local>`, pois ele liberaria todos os nomes sem ponto. |
 | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\AutoConfigURL` | ausente/vazio | Evita que um script PAC anteriormente configurado tenha precedência e mande o navegador diretamente à Internet. |
+| Flags WinINet da conexão (`INTERNET_PER_CONN_FLAGS`) | somente `PROXY_TYPE_PROXY`, sem `PROXY_TYPE_AUTO_DETECT` nem `PROXY_TYPE_AUTO_PROXY_URL` | Desativa WPAD/autodetecção e impede que uma configuração automática tenha precedência sobre o proxy manual. Não haverá fallback `DIRECT`. |
 
 O serviço notificará a mudança com `InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED)` e `InternetSetOption(INTERNET_OPTION_REFRESH)`. Quando a alteração for feita pela interface, essa notificação também será executada na sessão do usuário atual. Isso reduz a necessidade de logoff; abas já abertas podem exigir recarga.
 
