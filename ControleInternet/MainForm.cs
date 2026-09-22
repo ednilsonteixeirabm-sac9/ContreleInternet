@@ -145,7 +145,8 @@ namespace ControleInternet
                         return;
                     }
 
-                    _sites.Items[index] = dialog.Domain;
+                    _sites.Items.RemoveAt(index);
+                    _sites.Items.Add(dialog.Domain);
                     _sites.SelectedItem = dialog.Domain;
                 }
             }

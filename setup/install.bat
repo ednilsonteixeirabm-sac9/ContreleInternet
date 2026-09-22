@@ -52,7 +52,10 @@ if errorlevel 1 goto :service_failed
 
 sc.exe description "%SERVICE%" "Aplica o bloqueio de sites configurado pelo Controle de Internet." >nul
 sc.exe failure "%SERVICE%" reset= 0 actions= restart/5000/restart/5000/restart/5000 >nul
+if errorlevel 1 goto :service_config_failed
 sc.exe start "%SERVICE%" >nul
+if errorlevel 1 goto :start_failed
+call :wait_running
 if errorlevel 1 goto :start_failed
 
 echo.
@@ -69,8 +72,23 @@ exit /b 1
 echo ERRO: nao foi possivel registrar o Windows Service.
 exit /b 1
 
+:service_config_failed
+echo ERRO: nao foi possivel configurar a recuperacao automatica do servico.
+sc.exe delete "%SERVICE%" >nul 2>&1
+exit /b 1
+
 :start_failed
 echo ERRO: o servico nao iniciou. Restaurando qualquer alteracao de proxy.
+sc.exe stop "%SERVICE%" >nul 2>&1
 "%INSTALL%\ControleInternetService.exe" --restore-proxy
 sc.exe delete "%SERVICE%" >nul 2>&1
+exit /b 1
+
+:wait_running
+for /L %%I in (1,1,20) do (
+    sc.exe query "%SERVICE%" | find "RUNNING" >nul 2>&1
+    if not errorlevel 1 exit /b 0
+    ping 127.0.0.1 -n 2 >nul
+)
+echo ERRO: o servico nao atingiu o estado RUNNING.
 exit /b 1

@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 using ControleInternet.Common;
 
 namespace ControleInternet
@@ -19,6 +22,7 @@ namespace ControleInternet
                 {
                     pipe.Connect(3000);
                     pipe.ReadMode = PipeTransmissionMode.Byte;
+                    VerifyServiceIdentity(pipe);
                     AdminProtocol.Write(pipe, request);
                     return AdminProtocol.Read<AdminResponse>(pipe);
                 }
@@ -65,5 +69,104 @@ namespace ControleInternet
                 Config = config
             });
         }
+
+        private static void VerifyServiceIdentity(NamedPipeClientStream pipe)
+        {
+            uint processId;
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out processId))
+            {
+                throw new IOException("Não foi possível verificar a identidade do serviço.");
+            }
+
+            IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+            if (process == IntPtr.Zero)
+            {
+                throw new IOException("Não foi possível verificar o processo do serviço.");
+            }
+
+            IntPtr token = IntPtr.Zero;
+            try
+            {
+                if (!OpenProcessToken(process, TokenQuery, out token))
+                {
+                    throw new IOException("Não foi possível verificar o usuário do serviço.");
+                }
+
+                int required;
+                GetTokenInformation(token, TokenUser, IntPtr.Zero, 0, out required);
+                IntPtr buffer = Marshal.AllocHGlobal(required);
+                try
+                {
+                    if (!GetTokenInformation(token, TokenUser, buffer, required, out required))
+                    {
+                        throw new IOException("Não foi possível ler a identidade do serviço.");
+                    }
+
+                    TokenUserInfo tokenUser = (TokenUserInfo)Marshal.PtrToStructure(
+                        buffer,
+                        typeof(TokenUserInfo));
+                    SecurityIdentifier actual = new SecurityIdentifier(tokenUser.User.Sid);
+                    SecurityIdentifier expected = new SecurityIdentifier(
+                        WellKnownSidType.LocalSystemSid,
+                        null);
+                    if (!actual.Equals(expected))
+                    {
+                        throw new IOException("A conexão administrativa não pertence ao serviço LocalSystem.");
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            finally
+            {
+                if (token != IntPtr.Zero)
+                {
+                    CloseHandle(token);
+                }
+
+                CloseHandle(process);
+            }
+        }
+
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+        private const uint TokenQuery = 0x0008;
+        private const int TokenUser = 1;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SidAndAttributes
+        {
+            public IntPtr Sid;
+            public int Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TokenUserInfo
+        {
+            public SidAndAttributes User;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetNamedPipeServerProcessId(
+            SafePipeHandle pipe,
+            out uint serverProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inheritHandle, uint processId);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(
+            IntPtr token,
+            int informationClass,
+            IntPtr information,
+            int informationLength,
+            out int returnLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
     }
 }

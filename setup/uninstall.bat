@@ -4,6 +4,7 @@ setlocal
 set "SERVICE=ControleInternetService"
 set "INSTALL=%ProgramFiles%\ControleInternet"
 set "DATA=%ProgramData%\ControleInternet"
+set "SERVICE_EXISTS=0"
 
 "%SystemRoot%\System32\fltmc.exe" >nul 2>&1
 if errorlevel 1 (
@@ -13,6 +14,7 @@ if errorlevel 1 (
 
 sc.exe query "%SERVICE%" >nul 2>&1
 if not errorlevel 1 (
+    set "SERVICE_EXISTS=1"
     sc.exe stop "%SERVICE%" >nul 2>&1
     call :wait_stopped
     if errorlevel 1 exit /b 1
@@ -31,9 +33,25 @@ if exist "%INSTALL%\ControleInternetService.exe" (
     exit /b 1
 )
 
-sc.exe delete "%SERVICE%" >nul 2>&1
+if "%SERVICE_EXISTS%"=="1" (
+    sc.exe delete "%SERVICE%" >nul 2>&1
+    if errorlevel 1 (
+        echo ERRO: nao foi possivel remover o registro do servico.
+        exit /b 1
+    )
+)
+
 rd /S /Q "%INSTALL%" >nul 2>&1
+if exist "%INSTALL%" (
+    echo ERRO: nao foi possivel remover "%INSTALL%".
+    exit /b 1
+)
+
 rd /S /Q "%DATA%" >nul 2>&1
+if exist "%DATA%" (
+    echo ERRO: nao foi possivel remover "%DATA%".
+    exit /b 1
+)
 
 echo.
 echo Desinstalacao concluida. A configuracao original de proxy foi restaurada.

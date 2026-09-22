@@ -182,11 +182,6 @@ namespace ControleInternet.Service
             byte[] remainder,
             ParsedRequest request)
         {
-            if (request.Port != 443)
-            {
-                throw new InvalidDataException("CONNECT somente é permitido para HTTPS na porta 443.");
-            }
-
             using (TcpClient destination = Connect(request.Host, request.Port))
             {
                 NetworkStream destinationStream = destination.GetStream();

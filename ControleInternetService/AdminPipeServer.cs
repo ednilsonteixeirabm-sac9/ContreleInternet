@@ -12,6 +12,7 @@ namespace ControleInternet.Service
         private readonly Func<AdminRequest, AdminResponse> _handler;
         private readonly object _sync = new object();
         private volatile bool _running;
+        private bool _firstInstance = true;
         private NamedPipeServerStream _waitingPipe;
         private Thread _acceptThread;
 
@@ -66,7 +67,8 @@ namespace ControleInternet.Service
                 NamedPipeServerStream pipe = null;
                 try
                 {
-                    pipe = CreatePipe();
+                    pipe = CreatePipe(_firstInstance);
+                    _firstInstance = false;
                     lock (_sync)
                     {
                         if (!_running)
@@ -116,10 +118,25 @@ namespace ControleInternet.Service
         private void HandleConnection(NamedPipeServerStream pipe)
         {
             using (pipe)
+            using (Timer timeout = new Timer(
+                delegate
+                {
+                    try
+                    {
+                        pipe.Dispose();
+                    }
+                    catch
+                    {
+                    }
+                },
+                null,
+                10000,
+                Timeout.Infinite))
             {
                 try
                 {
                     AdminRequest request = AdminProtocol.Read<AdminRequest>(pipe);
+                    timeout.Change(Timeout.Infinite, Timeout.Infinite);
                     AdminResponse response = _handler(request);
                     AdminProtocol.Write(pipe, response);
                 }
@@ -137,7 +154,7 @@ namespace ControleInternet.Service
             }
         }
 
-        private static NamedPipeServerStream CreatePipe()
+        private static NamedPipeServerStream CreatePipe(bool firstInstance)
         {
             PipeSecurity security = new PipeSecurity();
             SecurityIdentifier authenticatedUsers = new SecurityIdentifier(
@@ -147,7 +164,12 @@ namespace ControleInternet.Service
             SecurityIdentifier administrators = new SecurityIdentifier(
                 WellKnownSidType.BuiltinAdministratorsSid,
                 null);
+            SecurityIdentifier network = new SecurityIdentifier(WellKnownSidType.NetworkSid, null);
 
+            security.AddAccessRule(new PipeAccessRule(
+                network,
+                PipeAccessRights.FullControl,
+                AccessControlType.Deny));
             security.AddAccessRule(new PipeAccessRule(
                 authenticatedUsers,
                 PipeAccessRights.ReadWrite,
@@ -166,7 +188,7 @@ namespace ControleInternet.Service
                 PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
                 PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous,
+                PipeOptions.Asynchronous | (firstInstance ? (PipeOptions)0x00080000 : PipeOptions.None),
                 4096,
                 4096,
                 security);

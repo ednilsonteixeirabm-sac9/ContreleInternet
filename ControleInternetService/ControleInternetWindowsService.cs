@@ -55,6 +55,12 @@ namespace ControleInternet.Service
         {
             try
             {
+                if (!File.Exists(Paths.ConfigFile) && File.Exists(Paths.ProxyBackupFile))
+                {
+                    Logger.Info("Configuração ausente com proxy ativo; mantendo bloqueio fail-closed.");
+                    return new AppConfig { BlockAllSites = true, AllowListedSites = false };
+                }
+
                 return _store.Load();
             }
             catch (Exception exception)
