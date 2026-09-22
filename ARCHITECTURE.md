@@ -84,7 +84,6 @@ ControleInternet.sln
 │   ├── ControleInternetService.cs
 │   ├── ConfigWatcher.cs
 │   ├── SystemProxy.cs                (backup / aplicar / restaurar proxy)
-│   ├── QuicFirewall.cs               (regra UDP 443 complementar)
 │   └── LocalHttpProxy.cs             (mecanismo de bloqueio — não implementar agora)
 │
 ├── setup\
@@ -126,8 +125,8 @@ Ela também chama `InternetSetOption` no **sessão do usuário** para o Chrome/E
 Na inicialização:
 
 1. ler `config.json`;
-2. se `Bloquear todos os sites` estiver desmarcado: restaurar proxy e regra de firewall, se tiverem sido alterados por este programa;
-3. se estiver marcado: garantir o proxy local no ar, apontar o proxy do sistema para ele e, se necessário, aplicar a regra complementar de UDP 443;
+2. se `Bloquear todos os sites` estiver desmarcado: restaurar a configuração original de proxy, se tiver sido alterada por este programa;
+3. se estiver marcado: garantir o proxy local no ar e apontar o proxy WinINet/Internet Options por máquina para ele;
 4. vigiar o arquivo de configuração e reaplicar quando a interface salvar.
 
 ### 3.3 ControleInternet.Common
@@ -168,7 +167,7 @@ Backup das configurações originais do Windows (para desinstalação e para o m
 
 `C:\ProgramData\ControleInternet\windows-backup.json`
 
-Esse backup é criado **antes** da primeira alteração de proxy/firewall. Se já existir, não é sobrescrito com valores já modificados pelo próprio programa.
+Esse backup é criado **antes** da primeira alteração do proxy do sistema. Se já existir, não é sobrescrito com valores já modificados pelo próprio programa.
 
 ### Senha (`PasswordHasher`)
 
@@ -217,120 +216,123 @@ Checkbox 2 (`Liberar os sites listados a seguir`) só tem efeito quando o checkb
 - `ControleInternetService` — `OnStart` / `OnStop` / `OnShutdown`.
 - `ConfigWatcher` — `FileSystemWatcher` no `config.json` + releitura defensiva.
 - `SystemProxy` — backup, aplicação e restauração do proxy por máquina.
-- `QuicFirewall` — cria/remove uma regra nomeada do Windows Firewall.
 - `LocalHttpProxy` — **não implementar nesta etapa.**
 
 ---
 
 ## 5. Mecanismo escolhido para bloquear e liberar sites
 
-### Decisão
+### 5.1 Decisão revisada
 
-**Proxy HTTP local, embutido no Windows Service, combinado com o proxy do sistema (WinINet / WinHTTP) em nível de máquina.**
+**Proxy HTTP local, embutido no Windows Service, combinado somente com a configuração de proxy do Windows usada por navegadores (WinINet/Internet Options), em nível de máquina.**
 
-Complemento (não é o mecanismo principal): uma regra do Windows Firewall bloqueando **UDP 443 de saída**, somente enquanto o bloqueio estiver ativo, para reduzir bypass por QUIC/HTTP/3.
+O proxy global do **WinHTTP foi eliminado**. Também foi eliminada a regra de firewall para UDP 443. Essas duas alterações alcançavam componentes que estão fora do escopo e não são necessárias para direcionar Chrome e Edge a um proxy HTTP explícito.
 
-Não será usado:
+Não será usado arquivo `hosts`, DNS, proxy WinHTTP global, regra de firewall, driver de rede, inspeção de conteúdo, certificado raiz, MITM ou descriptografia TLS.
 
-- arquivo `hosts` (não consegue “bloquear todos os sites”);
-- DNS local como mecanismo principal (DoH do Chrome/Edge no Windows 10/11 ignora o DNS do sistema);
-- firewall por endereço IP (CDNs mudam IP; o PRD pede domínio);
-- inspeção de conteúdo HTTP/HTTPS;
-- certificado raiz, MITM ou descriptografia TLS.
+### 5.2 Configurações do Windows que serão alteradas
 
-### 5.1 Como os sites serão bloqueados
+Antes da primeira alteração, o serviço salva os valores originais. Enquanto `Bloquear todos os sites` estiver marcado, altera somente:
 
-1. O serviço abre um socket TCP em `127.0.0.1` e `::1`, porta fixa da aplicação (proposta: **18754**). Nada além do loopback.
-2. O serviço grava o proxy do Windows para `127.0.0.1:18754` (e equivalente IPv6 quando aplicável), de forma **por máquina**, não só no usuário SYSTEM.
-3. O navegador, ao abrir um site:
-   - **HTTP:** envia o pedido ao proxy, com cabeçalho `Host`.
-   - **HTTPS:** envia `CONNECT host:443`. O nome do site vai em texto claro nesse comando; o TLS continua ponta a ponta entre o navegador e o servidor. O proxy **não** vê o conteúdo da página e **não** instala certificado.
-4. O serviço decide:
-   - **Situação 1** — bloqueio desligado: o serviço **não** força proxy (restaura o backup). Navegação normal.
-   - **Situação 2** — bloquear todos, allowlist desligada: qualquer `Host` / `CONNECT` é recusado (conexão fechada ou resposta `403`).
-   - **Situação 3** — bloquear todos, allowlist ligada: só passa o que casar com a lista (e subdomínios).
-5. Se o destino for permitido, o serviço abre TCP até o destino e encaminha bytes **sem interpretar o TLS**.
+| Configuração | Valor durante o bloqueio | Por que é necessária |
+|---|---|---|
+| `HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings\ProxySettingsPerUser` | `0` | Faz a configuração manual de proxy valer por máquina. Sem isso, o serviço executado como `LocalSystem` alteraria a sessão errada ou teria de editar o perfil de cada usuário. |
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyEnable` | `1` | Ativa o proxy manual lido como configuração de Internet do Windows. |
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyServer` | `http=127.0.0.1:18754;https=127.0.0.1:18754` | Direciona tanto HTTP quanto HTTPS ao proxy local. O prefixo `https=` identifica URLs HTTPS; o proxy usado continua sendo um proxy HTTP comum. |
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\ProxyOverride` | somente loopback local | Impede que endereços locais sejam encaminhados ao proxy. Não haverá `<local>`, pois ele liberaria todos os nomes sem ponto. |
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\AutoConfigURL` | ausente/vazio | Evita que um script PAC anteriormente configurado tenha precedência e mande o navegador diretamente à Internet. |
 
-Endereços IP literais (`http://1.2.3.4`) não são domínio cadastrado → ficam bloqueados nas situações 2 e 3.
+O serviço notificará a mudança com `InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED)` e `InternetSetOption(INTERNET_OPTION_REFRESH)`. Quando a alteração for feita pela interface, essa notificação também será executada na sessão do usuário atual. Isso reduz a necessidade de logoff; abas já abertas podem exigir recarga.
 
-`localhost` / `127.0.0.1` / `::1` entram em `ProxyOverride` para o próprio proxy não entrar em loop. Isso não libera sites da Internet.
+Não serão alterados:
 
-### 5.2 Como os domínios da allowlist serão identificados
+- proxy global WinHTTP (`netsh winhttp`);
+- Windows Firewall;
+- DNS dos adaptadores;
+- arquivo `hosts`;
+- certificados;
+- configurações próprias de Chrome ou Edge;
+- Windows Update ou serviços do Windows.
 
-Exclusivamente pelo **hostname pedido pelo navegador**:
+Observação: os valores exatos existentes — inclusive ausência de valor, PAC e bypass anteriores — serão copiados antes da mudança e restaurados depois. Não serão substituídos por “padrões” inventados.
 
-- HTTP: campo `Host` (sem porta);
-- HTTPS: alvo do `CONNECT` (sem porta).
+### 5.3 WinHTTP
 
-Não há consulta a lista de IPs, não há inspeção de URL além do host, não há classificação de conteúdo.
+**Sim, WinHTTP pode e será eliminado.**
 
-Comparação sempre em minúsculas, depois de normalizar o host.
+Chrome e Edge, no comportamento padrão no Windows, leem as configurações de proxy do sistema no formato WinINet/Internet Options. Eles possuem seu próprio resolvedor Chromium; não precisam que o proxy global de `netsh winhttp` seja modificado.
 
-### 5.3 Subdomínios
+O proxy WinHTTP é usado principalmente por serviços e componentes do Windows. Alterá-lo ampliaria o bloqueio para Windows Update e outros processos fora do escopo, sem melhorar o controle normal de navegação no Chrome/Edge.
 
-Como na tabela da seção 4: igualdade ou sufixo `"." + dominio`. Não é “contains” e não é `EndsWith(dominio)` sem o ponto, precisamente para rejeitar `outrogov.br` e `meugov.br`.
+### 5.4 Como Chrome e Edge serão direcionados ao proxy
 
-### 5.4 Windows 7
+1. O serviço escuta apenas em loopback (`127.0.0.1`, porta proposta `18754`).
+2. A configuração de proxy do Windows por máquina aponta HTTP e HTTPS para esse endereço.
+3. Chrome e Edge, quando não possuem política, extensão ou linha de comando de proxy que substitua a configuração do sistema, leem essa configuração e enviam os pedidos ao serviço.
+4. O serviço aplica exatamente as três regras:
+   - bloqueio desmarcado: proxy original restaurado; navegação normal;
+   - bloqueio marcado e allowlist desmarcada: todos os hosts recusados;
+   - bloqueio marcado e allowlist marcada: somente domínio cadastrado ou host terminado em `"." + domínio` é encaminhado.
 
-APIs usadas, todas presentes no Windows 7 (Vista+ / Win7):
+Outros navegadores que respeitam as configurações de proxy do Windows também passam pelo serviço. Programas que deliberadamente ignoram o proxy do sistema estão fora do escopo definido.
 
-| Necessidade | API |
+### 5.5 Tratamento de HTTP, HTTPS e domínios
+
+Para HTTP, o navegador envia ao proxy a requisição com o hostname no cabeçalho `Host`.
+
+Para HTTPS, o navegador envia primeiro:
+
+```text
+CONNECT exemplo.com:443
+```
+
+O serviço decide usando `exemplo.com`. Se permitido, abre uma conexão TCP ao destino e apenas transporta os bytes TLS. A negociação TLS ocorre diretamente entre navegador e site:
+
+- nenhuma descriptografia;
+- nenhum certificado instalado;
+- nenhum MITM;
+- nenhum acesso ao conteúdo, caminho da URL, formulário ou senha.
+
+O domínio é obtido somente do `Host` HTTP ou do destino do `CONNECT`. A regra de subdomínio continua sendo igualdade ou sufixo `"." + domínio`, respeitando o limite DNS.
+
+### 5.6 QUIC / HTTP/3
+
+**Não será criada regra de firewall UDP 443.**
+
+QUIC para um site de origem é uma conexão direta UDP. Quando Chrome/Edge têm um proxy HTTP explícito para a URL, a rota selecionada é o proxy; um proxy HTTP comum não transporta a conexão direta HTTP/3 até a origem. O navegador usa HTTP sobre o proxy ou, para HTTPS, um túnel `CONNECT` em TCP. Portanto, a configuração explícita não deve ser contornada por uma tentativa QUIC direta.
+
+Uma regra global contra UDP 443 afetaria outros aplicativos e protocolos e contrariaria o objetivo de alteração mínima. Ela só seria reconsiderada mediante evidência reproduzível, nos testes de compatibilidade, de que uma versão suportada do Chrome/Edge ignora o proxy explícito e alcança uma origem por QUIC. Qualquer reconsideração exigirá nova aprovação; não será adicionada silenciosamente.
+
+### 5.7 Compatibilidade
+
+As APIs e configurações usadas existem no Windows 7, Windows 10 e Windows 11:
+
+| Necessidade | Mecanismo |
 |---|---|
-| Proxy por máquina | `HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings\ProxySettingsPerUser = 0` |
-| Valores de proxy | `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings` (`ProxyEnable`, `ProxyServer`, `ProxyOverride`, `AutoConfigURL` limpo) |
-| WinHTTP (alguns componentes do SO) | `WinHttpSetDefaultProxyConfiguration` / `netsh winhttp set proxy` |
-| Aviso ao WinINet | `InternetSetOption` (`INTERNET_OPTION_SETTINGS_CHANGED` / `REFRESH`) |
-| Firewall UDP 443 | COM `INetFwPolicy2` / `netsh advfirewall` (existe no Windows 7) |
-| Serviço | `System.ServiceProcess` + `sc.exe` / `InstallUtil` |
-| Socket do proxy | `System.Net.Sockets.TcpListener` (.NET 4.6.2) |
+| Proxy por máquina | `ProxySettingsPerUser = 0` e valores WinINet/Internet Options em HKLM |
+| Notificação da mudança | `InternetSetOption` (`SETTINGS_CHANGED` e `REFRESH`) |
+| Proxy local | `System.Net.Sockets.TcpListener` do .NET Framework 4.6.2 |
+| Processo persistente | Windows Service (`System.ServiceProcess`) |
 
-Não há WFP callout driver, WinDivert, TDI nem APIs de Windows 8+.
+Chrome nas versões compatíveis com Windows 7 usa as configurações de proxy do sistema. Edge Chromium não possui versão atualmente suportada no Windows 7; no Windows 10 e 11, Chrome e Edge usam essas configurações por padrão.
 
-Chrome nas versões que ainda rodavam em Windows 7 respeita o proxy do sistema WinINet. Edge Chromium **não** é suportado oficialmente no Windows 7; o PRD pede Edge “nas versões compatíveis com cada sistema”, portanto Edge entra no escopo no Windows 10 e 11.
+### 5.8 Quando o bloqueio é desativado
 
-### 5.5 Windows 10 e Windows 11
+O serviço:
 
-O mesmo mecanismo: WinINet/WinHTTP + proxy local.
+1. restaura exatamente os valores WinINet/Internet Options copiados antes da ativação;
+2. notifica o Windows e a sessão administrativa da mudança;
+3. para de aceitar novas conexões no proxy local.
 
-Chrome e Edge atuais no Windows usam as configurações de proxy do sistema. O `CONNECT` continua expondo o hostname sem descriptografar HTTPS.
+A lista de domínios continua salva, mas não interfere na navegação. Como WinHTTP, firewall e DNS nunca foram alterados, não existe restauração para esses componentes.
 
-A regra UDP 443 existe porque, nestes sistemas, Chrome/Edge podem tentar HTTP/3 (QUIC) e, em alguns casos, sair direto na UDP 443, furando o proxy. Com UDP 443 bloqueada pelo firewall do Windows, o navegador cai para TCP 443 via proxy.
+### 5.9 Se o serviço parar inesperadamente
 
-Não será usada a API de AppContainer, `Windows.Networking`, filtro de família Microsoft Family Safety, nem Defender.
+Se o bloqueio estiver ativo, o proxy do sistema permanece apontando para `127.0.0.1:18754`, mas não haverá processo atendendo. Chrome, Edge e navegadores que usam o proxy mostrarão erro de conexão com o proxy; **não haverá liberação acidental dos sites**. É comportamento fail-closed.
 
-### 5.6 Dependências externas
+O Windows Service será configurado para reiniciar automaticamente após falha. Quando voltar, relê a configuração e reabre o proxy.
 
-Nenhuma.
-
-- sem servidor na Internet;
-- sem lista de categorias online;
-- sem pacote NuGet;
-- sem driver de terceiros;
-- sem certificado.
-
-Única dependência: .NET Framework 4.6.2 já instalado no Windows.
-
-### 5.7 Configurações do Windows que serão alteradas
-
-Somente enquanto `Bloquear todos os sites` estiver **marcado**, e sempre com backup prévio:
-
-1. **Proxy por máquina (WinINet)**  
-   - `ProxySettingsPerUser = 0`  
-   - `ProxyEnable = 1`  
-   - `ProxyServer = 127.0.0.1:18754`  
-   - `ProxyOverride = localhost;127.0.0.1;::1`  
-   - `AutoConfigURL` vazio (para o PAC antigo não mandar o tráfego para outro lugar)
-
-2. **Proxy WinHTTP**  
-   - alinhado ao mesmo servidor, para componentes que não usam WinINet.
-
-3. **Firewall do Windows**  
-   - uma regra nomeada, por exemplo `ControleInternet_BlockQUIC`, outbound UDP destino 443, ação bloquear.  
-   - nenhuma outra regra de firewall.
-
-Quando o bloqueio for **desmarcado**, na desinstalação correta, ou se a aplicação da nova config falhar depois do backup: restaurar exatamente os valores salvos em `windows-backup.json` e apagar a regra de firewall deste programa.
-
-Nada de alterar DNS dos adaptadores, arquivo `hosts`, GPOs extras, certificados ou serviços de rede do Windows.
+Se as tentativas de recuperação falharem, a desinstalação administrativa restaura os valores diretamente do backup, sem depender do serviço em execução. Se o bloqueio já estiver desativado quando o serviço parar, a navegação permanece normal.
 
 ---
 
@@ -338,7 +340,7 @@ Nada de alterar DNS dos adaptadores, arquivo `hosts`, GPOs extras, certificados 
 
 | Checkbox 1 bloquear todos | Checkbox 2 liberar lista | Resultado |
 |---|---|---|
-| desmarcado | (ignorado) | Proxy e regra QUIC restaurados. Internet normal. A lista permanece no arquivo, sem efeito. |
+| desmarcado | (ignorado) | Configuração original de proxy restaurada. Internet normal. A lista permanece no arquivo, sem efeito. |
 | marcado | desmarcado | Proxy local ativo. Todo `Host`/`CONNECT` recusado. |
 | marcado | marcado | Proxy local ativo. Só passam os domínios cadastrados e seus subdomínios. |
 
@@ -359,7 +361,7 @@ Ordem obrigatória:
 
 1. criar pasta em ProgramData;
 2. **gravar backup** se ainda não existir;
-3. só então alterar proxy/firewall;
+3. só então alterar o proxy WinINet/Internet Options;
 4. se a etapa 3 falhar: restaurar o backup imediatamente e registrar o erro.
 
 A interface, ao salvar, não deixa o sistema “pela metade”: ou aplica a nova config, ou reverte ao último estado consistente.
@@ -369,10 +371,9 @@ A interface, ao salvar, não deixa o sistema “pela metade”: ou aplica a nova
 O `uninstall.bat` (executado como administrador):
 
 1. para o serviço;
-2. restaura proxy WinINet e WinHTTP a partir do backup;
-3. remove a regra `ControleInternet_BlockQUIC`;
-4. desinstala o serviço;
-5. apaga `C:\ProgramData\ControleInternet`.
+2. restaura o proxy WinINet/Internet Options a partir do backup;
+3. desinstala o serviço;
+4. apaga `C:\ProgramData\ControleInternet`.
 
 Se o backup não existir (nunca chegou a alterar o Windows), não mexe no proxy.
 
@@ -396,12 +397,11 @@ O PRD não exige resistência a quem tem direitos de administrador e quer furar 
 1. **Programas que ignoram o proxy do Windows** (Firefox com configuração própria, alguns clientes HTTP, `curl` sem `-x`, aplicativos com IP fixo) não passam pelo filtro.
 2. **Usuário administrador** pode parar o serviço, desfazer o proxy ou desinstalar.
 3. **VPN / proxy manual** definido depois pelo usuário pode desviar o tráfego.
-4. **HTTP/3 (QUIC):** mitigado pela regra UDP 443, não pelo proxy. Se essa regra for apagada à mão, o navegador moderno pode furar o proxy em alguns sites.
-5. **Windows Update e outros usos WinHTTP:** com o bloqueio ligado e WinHTTP apontando para o proxy local, atualizações e alguns componentes da Microsoft podem falhar, a menos que o domínio esteja na allowlist. Não será criada exceção oculta — está fora do escopo e seria funcionalidade extra.
-6. **Edge no Windows 7:** não há Edge Chromium suportado; no 7 o alvo é o Chrome (e o Internet Explorer, que também usa WinINet, embora o PRD não o cite).
-7. **Domínios internacionalizados (IDN):** o navegador envia forma punycode (`xn--...`) no `CONNECT`. O cadastro deve usar o mesmo texto que o navegador envia, ou a implementação (após aprovação) normaliza com `System.Globalization.IdnMapping`, API já existente no 4.6.2.
-8. **Não bloqueia qualquer protocolo**, só o que o sistema manda ao proxy HTTP. O alvo do PRD é site HTTP/HTTPS no Chrome/Edge.
-9. **Reinício do navegador:** depois de Salvar, a UI avisa o WinINet da sessão atual; mesmo assim, abas já abertas podem precisar ser recarregadas.
+4. **Políticas ou linha de comando do navegador:** uma política empresarial, extensão autorizada ou parâmetro de inicialização que defina outro proxy pode ter precedência sobre o proxy do sistema.
+5. **Edge no Windows 7:** não há Edge Chromium suportado; no 7 o alvo é o Chrome (e o Internet Explorer, que também usa WinINet, embora o PRD não o cite).
+6. **Domínios internacionalizados (IDN):** o navegador envia forma punycode (`xn--...`) no `CONNECT`. O cadastro deve usar o mesmo texto que o navegador envia, ou a implementação (após aprovação) normaliza com `System.Globalization.IdnMapping`, API já existente no 4.6.2.
+7. **Não bloqueia qualquer protocolo**, só o que o sistema manda ao proxy HTTP. O alvo do PRD é site HTTP/HTTPS no Chrome/Edge.
+8. **Reinício do navegador:** depois de Salvar, a UI avisa o WinINet da sessão atual; mesmo assim, abas já abertas podem precisar ser recarregadas.
 
 Nenhuma dessas limitações exige trocar o mecanismo.
 
@@ -417,6 +417,6 @@ Conforme o PRD, não haverá horários, perfis, usuários, histórico, relatóri
 
 Para seguir à implementação, é necessário aprovar explicitamente:
 
-**Mecanismo: proxy HTTP local no Windows Service + proxy do sistema por máquina (WinINet/WinHTTP), com regra complementar de firewall UDP 443 enquanto o bloqueio estiver ativo.**
+**Mecanismo: proxy HTTP local no Windows Service + proxy WinINet/Internet Options por máquina, sem WinHTTP e sem regra de firewall.**
 
-Enquanto essa aprovação não existir, não será escrito o código de `LocalHttpProxy`, `SystemProxy` nem `QuicFirewall`.
+Enquanto essa aprovação não existir, não será escrito o código de `LocalHttpProxy` nem `SystemProxy`.
