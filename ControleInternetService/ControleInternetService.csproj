@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{1A506086-C4D1-4A77-A2A6-D4A4CD00F37A}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ControleInternet.Service</RootNamespace>
+    <AssemblyName>ControleInternetService</AssemblyName>
+    <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.ServiceProcess" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ControleInternet.Common\ControleInternet.Common.csproj">
+      <Project>{A8D2C18A-2CC4-4D8A-A06D-236060548F11}</Project>
+      <Name>ControleInternet.Common</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="AdminPipeServer.cs" />
+    <Compile Include="ControleInternetWindowsService.cs" />
+    <Compile Include="LocalHttpProxy.cs" />
+    <Compile Include="Logger.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="SystemProxy.cs" />
+    <None Include="App.config" />
+  </ItemGroup>
+</Project>
