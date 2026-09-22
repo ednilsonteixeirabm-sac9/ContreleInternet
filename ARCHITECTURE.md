@@ -1,6 +1,6 @@
 # Arquitetura — Controle de Acesso à Internet
 
-**Status:** proposta para aprovação. Nenhum código do mecanismo de bloqueio foi implementado.
+**Status:** aprovada em 22/09/2026, com administração sem elevação via IPC autenticado.
 
 Este documento cobre exclusivamente a primeira etapa pedida no PRD:
 
@@ -30,14 +30,15 @@ O produto tem dois processos distintos, com um terceiro projeto apenas para cód
 Administrador
      │
      ▼
-ControleInternet.exe
+ControleInternet.exe (usuário normal, sem UAC)
   - pede senha
   - altera checkboxes e lista
-  - grava C:\ProgramData\ControleInternet\config.json
+  - solicita leitura/gravação ao serviço por named pipe
      │
-     │  FileSystemWatcher / releitura
+     │  IPC local autenticado pela senha da aplicação
      ▼
 ControleInternetService  (LocalSystem, StartType = Automatic)
+  - valida a senha e grava C:\ProgramData\ControleInternet\config.json
   - sobe um proxy HTTP local em 127.0.0.1 (e ::1)
   - configura o proxy do Windows para apontar para esse endereço
   - decide permitir ou recusar cada site pelo hostname
@@ -107,14 +108,16 @@ Não será usado .NET Core, .NET 5+, pacotes NuGet externos nem APIs exclusivas 
 Responsabilidades, conforme o PRD:
 
 - pedir senha ao abrir;
-- na primeira execução, se ainda não existir hash gravado, pedir a criação da senha (duas vezes) e persistir só o hash;
+- na primeira execução, se ainda não existir hash gravado, pedir a criação da senha (duas vezes) e solicitar ao serviço que persista só o hash;
 - exibir os dois checkboxes e a lista de domínios;
 - adicionar, editar e remover sites;
-- gravar `config.json`.
+- solicitar ao serviço, por named pipe local, a leitura e a gravação de `config.json`.
 
 A interface **não** precisa ficar aberta. Depois de **Salvar**, ela pode ser fechada.
 
-Ela também chama `InternetSetOption` no **sessão do usuário** para o Chrome/Edge enxergarem a nova configuração de proxy sem exigir logoff. A aplicação dessas configurações de Windows continua sendo responsabilidade do serviço; a interface só dispara o refresh da sessão atual.
+`ControleInternet.exe` usa manifesto `asInvoker`: não pede UAC e não grava HKLM nem ProgramData. O named pipe permite conexão de usuários autenticados do Windows, mas o serviço só aceita autenticação ou alteração após validar a senha própria do ControleInternet. A senha trafega somente pelo IPC local e nunca é gravada em texto puro.
+
+Ela também chama `InternetSetOption` na **sessão do usuário** para o Chrome/Edge enxergarem a nova configuração de proxy sem exigir logoff. Essa chamada não exige elevação. A aplicação das configurações protegidas do Windows continua sendo responsabilidade exclusiva do serviço.
 
 ### 3.2 ControleInternetService (serviço)
 
@@ -127,7 +130,7 @@ Na inicialização:
 1. ler `config.json`;
 2. se `Bloquear todos os sites` estiver desmarcado: restaurar a configuração original de proxy, se tiver sido alterada por este programa;
 3. se estiver marcado: garantir o proxy local no ar e apontar o proxy WinINet/Internet Options por máquina para ele;
-4. vigiar o arquivo de configuração e reaplicar quando a interface salvar.
+4. atender o named pipe administrativo, validar a senha, persistir e aplicar cada configuração aceita.
 
 ### 3.3 ControleInternet.Common
 
