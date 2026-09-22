@@ -16,6 +16,7 @@ namespace ControleInternet.Service
         private const int MaximumHeaderSize = 64 * 1024;
         private const int IoTimeoutMilliseconds = 30000;
         private readonly object _sync = new object();
+        private readonly SemaphoreSlim _connectionLimit = new SemaphoreSlim(64, 64);
         private TcpListener _listener;
         private Thread _acceptThread;
         private volatile bool _running;
@@ -93,7 +94,24 @@ namespace ControleInternet.Service
                 try
                 {
                     TcpClient client = _listener.AcceptTcpClient();
-                    ThreadPool.QueueUserWorkItem(delegate { HandleClient(client); });
+                    if (!_connectionLimit.Wait(0))
+                    {
+                        client.Close();
+                        continue;
+                    }
+
+                    ThreadPool.QueueUserWorkItem(
+                        delegate
+                        {
+                            try
+                            {
+                                HandleClient(client);
+                            }
+                            finally
+                            {
+                                _connectionLimit.Release();
+                            }
+                        });
                 }
                 catch (SocketException)
                 {

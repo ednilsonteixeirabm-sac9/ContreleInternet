@@ -32,12 +32,11 @@ if errorlevel 1 goto :copy_failed
 xcopy "%UI_BUILD%\ControleInternet.exe*" "%INSTALL%\" /Y >nul
 if errorlevel 1 goto :copy_failed
 
-rem Somente SYSTEM e Administradores podem alterar configuracao e backup.
-rem Usuarios normais recebem leitura; as alteracoes passam pelo named pipe.
+rem Somente SYSTEM e Administradores acessam configuracao, hash e backup.
+rem Usuarios normais fazem toda leitura e alteracao pelo named pipe autenticado.
 icacls "%DATA%" /inheritance:r ^
     /grant:r "*S-1-5-18:(OI)(CI)F" ^
-    "*S-1-5-32-544:(OI)(CI)F" ^
-    "*S-1-5-32-545:(OI)(CI)R" >nul
+    "*S-1-5-32-544:(OI)(CI)F" >nul
 if errorlevel 1 (
     echo ERRO: nao foi possivel proteger a pasta de configuracao.
     exit /b 1
@@ -80,7 +79,16 @@ exit /b 1
 :start_failed
 echo ERRO: o servico nao iniciou. Restaurando qualquer alteracao de proxy.
 sc.exe stop "%SERVICE%" >nul 2>&1
+call :wait_stopped
+if errorlevel 1 (
+    echo ERRO: o servico nao parou. O backup e os arquivos foram preservados.
+    exit /b 1
+)
 "%INSTALL%\ControleInternetService.exe" --restore-proxy
+if errorlevel 1 (
+    echo ERRO: o proxy original nao foi restaurado. O backup foi preservado.
+    exit /b 1
+)
 sc.exe delete "%SERVICE%" >nul 2>&1
 exit /b 1
 
@@ -91,4 +99,12 @@ for /L %%I in (1,1,20) do (
     ping 127.0.0.1 -n 2 >nul
 )
 echo ERRO: o servico nao atingiu o estado RUNNING.
+exit /b 1
+
+:wait_stopped
+for /L %%I in (1,1,20) do (
+    sc.exe query "%SERVICE%" | find "STOPPED" >nul 2>&1
+    if not errorlevel 1 exit /b 0
+    ping 127.0.0.1 -n 2 >nul
+)
 exit /b 1

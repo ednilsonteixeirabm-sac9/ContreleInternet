@@ -66,7 +66,7 @@ Depois de clicar em **Salvar**, a interface pode ser fechada. O serviço mantém
 - Log do serviço: `C:\ProgramData\ControleInternet\service.log`
 - Proxy local: `127.0.0.1:18754`
 
-A senha usa PBKDF2 com salt aleatório e 100.000 iterações. Usuários normais possuem somente leitura na pasta de dados; toda alteração passa pelo serviço e exige a senha da aplicação.
+A senha usa PBKDF2 com salt aleatório e 100.000 iterações. Somente `LocalSystem` e administradores do Windows acessam a pasta de dados; usuários normais consultam e alteram a configuração exclusivamente pelo serviço, mediante a senha da aplicação.
 
 ## Desinstalação
 
